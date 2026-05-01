@@ -1,0 +1,229 @@
+<!--
+  navigation.launch
+  =================
+  Launches everything needed for autonomous navigation on a saved map:
+    1. Gazebo  with exploration_world
+    2. Robot (URDF spawned via param server)
+    3. robot_state_publisher + joint_state_publisher
+    4. map_server  — serves the saved map
+    5. amcl        — localises the robot within the map
+    6. move_base   — path planning + DWA local planner
+    7. RViz pre-configured for navigation
+
+  PRE-REQUISITE:
+    You must have already run slam.launch, driven the robot around
+    to build the map, then saved it with:
+      rosrun map_server map_saver -f ~/my_map
+    That creates  ~/my_map.yaml  and  ~/my_map.pgm.
+
+  Usage:
+    roslaunch diff_drive_robot navigation.launch map_file:=/home/<user>/my_map.yaml
+
+  Set a navigation goal:
+    In RViz click the "2D Nav Goal" button and click on the map.
+
+  Notes:
+  - The diff-drive plugin uses the "three_wheel_diff_drive" namespace.
+    move_base's cmd_vel is remapped to /three_wheel_diff_drive/cmd_vel.
+  - Odometry is remapped from /three_wheel_diff_drive/odom → /odom.
+  - The laser publishes on /scan (no namespace) from laser_frame.
+-->
+
+<launch>
+
+  <!-- ================================================================
+       ARGUMENTS
+       ================================================================ -->
+
+  <!-- REQUIRED: path to your saved map YAML file -->
+  <arg name="map_file"     default="$(env HOME)/my_map.yaml"/>
+
+  <arg name="gui"          default="true"/>
+  <arg name="paused"       default="false"/>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="use_rviz"     default="true"/>
+
+  <!-- Spawn pose — keep consistent with where you saved the map from -->
+  <arg name="x_pos"  default="0.0"/>
+  <arg name="y_pos"  default="0.0"/>
+  <arg name="z_pos"  default="0.05"/>
+  <arg name="yaw"    default="0.0"/>
+
+  <!-- AMCL initial pose — set to where the robot starts in the map -->
+  <arg name="initial_pose_x"   default="0.0"/>
+  <arg name="initial_pose_y"   default="0.0"/>
+  <arg name="initial_pose_a"   default="0.0"/>
+
+  <!-- ================================================================
+       SIM TIME
+       ================================================================ -->
+  <param name="use_sim_time" value="$(arg use_sim_time)"/>
+
+  <!-- ================================================================
+       ROBOT DESCRIPTION
+       ================================================================ -->
+  <param name="robot_description"
+         command="cat $(find diff_drive_robot)/urdf/three_wheel_diff_drive.urdf"/>
+
+  <!-- ================================================================
+       GAZEBO — same exploration world
+       ================================================================ -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name"
+         value="$(find diff_drive_robot)/worlds/exploration_world.world"/>
+    <arg name="paused"       value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="gui"          value="$(arg gui)"/>
+    <arg name="headless"     value="false"/>
+    <arg name="debug"        value="false"/>
+  </include>
+
+  <!-- ================================================================
+       SPAWN ROBOT
+       ================================================================ -->
+  <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model"
+        respawn="false" output="screen"
+        launch-prefix="bash -c 'sleep 3; $0 $@'"
+        args="-urdf
+              -model three_wheel_diff_drive
+              -param robot_description
+              -x $(arg x_pos)
+              -y $(arg y_pos)
+              -z $(arg z_pos)
+              -Y $(arg yaw)"/>
+
+  <!-- ================================================================
+       ROBOT STATE PUBLISHER
+       ================================================================ -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher"
+        type="robot_state_publisher" respawn="false" output="screen">
+    <param name="publish_frequency" type="double" value="30.0"/>
+  </node>
+
+  <!-- ================================================================
+       JOINT STATE PUBLISHER
+       ================================================================ -->
+  <node name="joint_state_publisher" pkg="joint_state_publisher"
+        type="joint_state_publisher" respawn="false" output="screen">
+    <param name="use_gui" value="false"/>
+    <rosparam param="source_list">["/joint_states"]</rosparam>
+  </node>
+
+  <!-- ================================================================
+       MAP SERVER — serves the previously saved map
+       ================================================================ -->
+  <node name="map_server" pkg="map_server" type="map_server"
+        args="$(arg map_file)" respawn="false" output="screen"/>
+
+
+  <!-- ================================================================
+       AMCL — Monte-Carlo localisation
+       Subscribes:  /scan, /tf, /map
+       Publishes:   /amcl_pose, /particlecloud, /tf (map→odom)
+       ================================================================ -->
+  <node name="amcl" pkg="amcl" type="amcl" respawn="false" output="screen">
+  <remap from="scan" to="/three_wheel_diff_drive/scan"/>
+
+    <!-- AMCL reads odom via TF (odom→base_footprint), NOT /odom topic.
+         The diff-drive plugin already publishes that TF — no remap needed.
+         tf_broadcast must be true so amcl takes over map→odom from the
+         static_transform_publisher once it has localised. -->
+    <param name="tf_broadcast" value="true"/>
+
+    <!-- Particle filter tuning -->
+    <param name="min_particles"     value="500"/>
+    <param name="max_particles"     value="2000"/>
+    <param name="kld_err"           value="0.05"/>
+    <param name="kld_z"             value="0.99"/>
+    <param name="update_min_d"      value="0.10"/>
+    <param name="update_min_a"      value="0.15"/>
+    <param name="resample_interval" value="1"/>
+    <param name="transform_tolerance" value="0.5"/>
+    <param name="recovery_alpha_slow" value="0.001"/>
+    <param name="recovery_alpha_fast" value="0.1"/>
+
+    <!-- Initial pose — robot spawn position -->
+    <param name="initial_pose_x"    value="$(arg initial_pose_x)"/>
+    <param name="initial_pose_y"    value="$(arg initial_pose_y)"/>
+    <param name="initial_pose_a"    value="$(arg initial_pose_a)"/>
+    <param name="initial_cov_xx"    value="0.25"/>
+    <param name="initial_cov_yy"    value="0.25"/>
+    <param name="initial_cov_aa"    value="0.0685"/>
+
+    <!-- Laser model — match URDF laser specs (range 0.1–12 m) -->
+    <param name="laser_model_type"        value="likelihood_field"/>
+    <param name="laser_likelihood_max_dist" value="2.0"/>
+    <param name="laser_max_beams"         value="60"/>
+    <param name="laser_min_range"         value="0.1"/>
+    <param name="laser_max_range"         value="12.0"/>
+    <param name="laser_z_hit"             value="0.95"/>
+    <param name="laser_z_short"           value="0.1"/>
+    <param name="laser_z_max"             value="0.05"/>
+    <param name="laser_z_rand"            value="0.05"/>
+    <param name="laser_sigma_hit"         value="0.2"/>
+    <param name="laser_lambda_short"      value="0.1"/>
+
+    <!-- Odometry motion model — differential drive -->
+    <param name="odom_model_type" value="diff"/>
+    <param name="odom_alpha1"     value="0.2"/>
+    <param name="odom_alpha2"     value="0.2"/>
+    <param name="odom_alpha3"     value="0.1"/>
+    <param name="odom_alpha4"     value="0.2"/>
+
+    <!-- Frames -->
+    <param name="base_frame_id"  value="base_footprint"/>
+    <param name="odom_frame_id"  value="odom"/>
+    <param name="global_frame_id" value="map"/>
+
+    <!-- Use the map latched from map_server -->
+    <param name="use_map_topic" value="true"/>
+    <param name="first_map_only" value="true"/>
+  </node>
+
+  <!-- ================================================================
+       MOVE BASE — path planning + execution
+       Subjscribes:  /scan, /odom (remapped), /move_base_simple/goal
+       Publishes:   /cmd_vel (remapped to namespaced topic)
+       ================================================================ -->
+  <node name="move_base" pkg="move_base" type="move_base" respawn="false" output="screen">
+  <remap from="cmd_vel" to="/three_wheel_diff_drive/cmd_vel"/>
+  <remap from="scan" to="/three_wheel_diff_drive/scan"/> 
+  <remap from="odom" to="/three_wheel_diff_drive/odom"/>
+
+    <!-- Planner selection -->
+    <param name="base_global_planner" value="navfn/NavfnROS"/>
+    <param name="base_local_planner"  value="dwa_local_planner/DWAPlannerROS"/>
+
+    <!-- move_base behaviour -->
+    <param name="recovery_behavior_enabled"  value="true"/>
+    <param name="clearing_rotation_allowed"  value="true"/>
+    <param name="planner_patience"           value="5.0"/>
+    <param name="controller_patience"        value="15.0"/>
+    <param name="oscillation_timeout"        value="10.0"/>
+    <param name="oscillation_distance"       value="0.2"/>
+    <param name="planner_frequency"          value="1.0"/>
+    <param name="controller_frequency"       value="5.0"/>
+    <param name="shutdown_costmaps"          value="false"/>
+
+    <!-- Load costmap and planner config files -->
+    <rosparam file="$(find diff_drive_robot)/config/costmap_common_params.yaml"
+              command="load" ns="global_costmap"/>
+    <rosparam file="$(find diff_drive_robot)/config/costmap_common_params.yaml"
+              command="load" ns="local_costmap"/>
+    <rosparam file="$(find diff_drive_robot)/config/global_costmap_params.yaml"
+              command="load"/>
+    <rosparam file="$(find diff_drive_robot)/config/local_costmap_params.yaml"
+              command="load"/>
+    <rosparam file="$(find diff_drive_robot)/config/base_local_planner_params.yaml"
+              command="load"/>
+  </node>
+
+  <!-- ================================================================
+       RVIZ — navigation view with map, costmaps, pose, goal
+       ================================================================ -->
+  <group if="$(arg use_rviz)">
+    <node name="rviz" pkg="rviz" type="rviz" respawn="false" output="screen"
+          args="-d $(find diff_drive_robot)/rviz/navigation.rviz"/>
+  </group>
+
+</launch>

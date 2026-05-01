@@ -1,0 +1,169 @@
+<!--
+  slam.launch
+  ===========
+  Launches everything needed for SLAM mapping:
+    1. Gazebo  with exploration_world
+    2. Robot (URDF spawned via param server)
+    3. robot_state_publisher + joint_state_publisher
+    4. gmapping  (uses /scan from the laser on laser_frame)
+    5. RViz pre-configured for SLAM
+
+  Usage:
+    roslaunch diff_drive_robot slam.launch
+
+  Drive the robot with teleop in a separate terminal:
+    rosrun teleop_twist_keyboard teleop_twist_keyboard.py \
+      cmd_vel:=/three_wheel_diff_drive/cmd_vel
+
+  Save the finished map (run in another terminal while this is still running):
+    rosrun map_server map_saver -f ~/my_map
+
+  Notes:
+  - The diff-drive plugin publishes under the "three_wheel_diff_drive"
+    namespace  (cmd_vel → /three_wheel_diff_drive/cmd_vel,
+                odom    → /three_wheel_diff_drive/odom).
+  - The laser plugin publishes on /scan (no namespace) from laser_frame.
+  - gmapping listens on /scan and uses odom from /three_wheel_diff_drive/odom
+    remapped to /odom below.
+-->
+
+<launch>
+
+  <!-- ================================================================
+       ARGUMENTS  (override on command line if needed)
+       ================================================================ -->
+  <arg name="gui"          default="true"/>
+  <arg name="paused"       default="false"/>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="use_rviz"     default="true"/>
+
+  <!-- Spawn pose -->
+  <arg name="x_pos" default="0.0"/>
+  <arg name="y_pos" default="0.0"/>
+  <arg name="z_pos" default="0.05"/>
+  <arg name="yaw"   default="0.0"/>
+
+  <!-- ================================================================
+       SIM TIME
+       ================================================================ -->
+  <param name="use_sim_time" value="$(arg use_sim_time)"/>
+
+  <!-- ================================================================
+       ROBOT DESCRIPTION  (use the compiled URDF — xacro not needed here
+       because the package ships a pre-compiled three_wheel_diff_drive.urdf)
+       ================================================================ -->
+  <param name="robot_description"
+         command="cat $(find diff_drive_robot)/urdf/three_wheel_diff_drive.urdf"/>
+
+  <!-- ================================================================
+       GAZEBO — load exploration world
+       ================================================================ -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name"
+         value="$(find diff_drive_robot)/worlds/exploration_world.world"/>
+    <arg name="paused"       value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="gui"          value="$(arg gui)"/>
+    <arg name="headless"     value="false"/>
+    <arg name="debug"        value="false"/>
+  </include>
+
+  <!-- ================================================================
+       SPAWN ROBOT  (short sleep so Gazebo is ready before spawn attempt)
+       ================================================================ -->
+  <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model"
+        respawn="false" output="screen"
+        launch-prefix="bash -c 'sleep 3; $0 $@'"
+        args="-urdf
+              -model three_wheel_diff_drive
+              -param robot_description
+              -x $(arg x_pos)
+              -y $(arg y_pos)
+              -z $(arg z_pos)
+              -Y $(arg yaw)"/>
+
+  <!-- ================================================================
+       ROBOT STATE PUBLISHER — broadcasts TF from robot_description
+       ================================================================ -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher"
+        type="robot_state_publisher" respawn="false" output="screen">
+    <param name="publish_frequency" type="double" value="30.0"/>
+  </node>
+
+  <!-- ================================================================
+       JOINT STATE PUBLISHER — needed so non-actuated joints have states
+       ================================================================ -->
+  <node name="joint_state_publisher" pkg="joint_state_publisher"
+        type="joint_state_publisher" respawn="false" output="screen">
+    <param name="use_gui" value="false"/>
+    <!-- The diff-drive plugin already publishes /joint_states;
+         tell jsp to merge with those rather than override them. -->
+    <rosparam param="source_list">["/joint_states"]</rosparam>
+  </node>
+
+  <!-- ================================================================
+       GMAPPING SLAM
+       Topics this robot provides that gmapping needs:
+         /scan          — LaserScan from laser_frame  (no namespace)
+         /odom          — Odometry (diff-drive publishes under ns;
+                          remap /three_wheel_diff_drive/odom → /odom)
+       ================================================================ -->
+  <node name="slam_gmapping" pkg="gmapping" type="slam_gmapping"
+        respawn="false" output="screen">
+
+    <!-- Remap the odometry topic from the namespaced plugin topic -->
+    <remap from="/odom" to="/three_wheel_diff_drive/odom"/>
+
+    <!-- Core frames — must match URDF / diff-drive plugin -->
+    <param name="base_frame"  value="base_footprint"/>
+    <param name="odom_frame"  value="odom"/>
+    <param name="map_frame"   value="map"/>
+
+    <!-- Laser topic is already /scan — no remap needed -->
+
+    <!-- Map size — covers the 14×14 m exploration world with margin -->
+    <param name="xmin"  value="-10.0"/>
+    <param name="ymin"  value="-10.0"/>
+    <param name="xmax"  value=" 10.0"/>
+    <param name="ymax"  value=" 10.0"/>
+    <param name="delta" value="0.05"/>
+
+    <!-- Laser settings — match the URDF sensor (range 0.1–12 m, 360 rays) -->
+    <param name="maxRange"  value="12.0"/>
+    <param name="maxUrange" value="11.9"/>
+
+    <!-- Update triggers — update map on small motion increments -->
+    <param name="linearUpdate"      value="0.1"/>
+    <param name="angularUpdate"     value="0.1"/>
+    <param name="temporalUpdate"    value="3.0"/>
+    <param name="resampleThreshold" value="0.5"/>
+
+    <!-- Particle filter -->
+    <param name="particles" value="80"/>
+
+    <!-- Scan matcher -->
+    <param name="sigma"      value="0.05"/>
+    <param name="kernelSize" value="1"/>
+    <param name="lstep"      value="0.05"/>
+    <param name="astep"      value="0.05"/>
+    <param name="iterations" value="5"/>
+    <param name="lsigma"     value="0.075"/>
+    <param name="ogain"      value="3.0"/>
+    <param name="lskip"      value="0"/>
+
+    <!-- Motion model noise -->
+    <param name="srr" value="0.1"/>
+    <param name="srt" value="0.2"/>
+    <param name="str" value="0.1"/>
+    <param name="stt" value="0.2"/>
+  </node>
+
+  <!-- ================================================================
+       RVIZ  — pre-configured for SLAM visualisation
+       ================================================================ -->
+  <group if="$(arg use_rviz)">
+    <node name="rviz" pkg="rviz" type="rviz" respawn="false" output="screen"
+          args="-d $(find diff_drive_robot)/rviz/slam.rviz"/>
+  </group>
+
+</launch>

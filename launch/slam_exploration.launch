@@ -1,0 +1,34 @@
+<!-- launch/slam_exploration.launch
+     One command to start everything:
+       - Gazebo with exploration world
+       - gmapping SLAM
+       - RViz for visualisation
+     Usage:
+       roslaunch diff_drive_robot slam_exploration.launch
+     Then drive robot using teleop to build the map.
+     Save map when done:
+       rosrun map_server map_saver -f ~/exploration_map
+-->
+<launch>
+  <arg name="gui"      default="true"/>
+  <arg name="use_rviz" default="true"/>
+
+  <!-- Start Gazebo with world and spawn robot -->
+  <include file="$(find diff_drive_robot)/launch/exploration.launch">
+    <arg name="gui" value="$(arg gui)"/>
+  </include>
+
+  <!-- gmapping SLAM -->
+<node pkg="gmapping" type="slam_gmapping" name="slam_gmapping" output="screen">
+    <remap from="scan" to="/three_wheel_diff_drive/scan"/>
+    <param name="base_frame" value="base_footprint"/>
+    <param name="odom_frame" value="odom"/>
+</node>
+
+  <!-- Optional RViz -->
+  <group if="$(arg use_rviz)">
+    <node name="rviz" pkg="rviz" type="rviz"
+          output="screen" args="-d $(find diff_drive_robot)/rviz/slam.rviz"/>
+  </group>
+<include file="$(find diff_drive_robot)/launch/move_base.launch"/>
+</launch>

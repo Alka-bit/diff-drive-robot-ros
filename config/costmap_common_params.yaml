@@ -1,0 +1,29 @@
+# costmap_common_params.yaml
+# Shared by both global and local costmaps.
+#
+# Sensor source: the laser plugin in the URDF publishes on /scan
+# from the frame "laser_frame" (no namespace, no remap needed).
+
+# Robot footprint — conservative bounding box of the chassis
+# (chassis 0.35 x 0.25 m, centred on base_link)
+footprint: [[-0.175, -0.125], [-0.175, 0.125], [0.175, 0.125], [0.175, -0.125]]
+footprint_padding: 0.02
+
+obstacle_layer:
+  enabled:              true
+  observation_sources:  laser_scan_sensor
+  laser_scan_sensor:
+    sensor_frame:        laser_frame        # matches <frameName> in URDF
+    data_type:           LaserScan
+    topic:               /scan              # matches <topicName> in URDF
+    marking:             true
+    clearing:            true
+    min_obstacle_height: -0.1
+    max_obstacle_height:  2.0
+    obstacle_range:      10.0
+    raytrace_range:      11.0
+
+inflation_layer:
+  enabled:              true
+  inflation_radius:     0.30               # slightly larger than robot half-width
+  cost_scaling_factor:  5.0

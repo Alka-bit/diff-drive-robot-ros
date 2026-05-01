@@ -1,0 +1,94 @@
+<!--
+  launch/three_wheel_diff_drive.launch
+  =====================================
+  Launches robot with Xtion depth camera in Gazebo + RViz
+
+  Usage:
+    roslaunch diff_drive_robot three_wheel_diff_drive.launch
+    roslaunch diff_drive_robot three_wheel_diff_drive.launch use_rviz:=true
+-->
+
+<launch>
+
+  <!-- ================================================================
+       ARGUMENTS
+       ================================================================ -->
+  <arg name="use_rviz"      default="false"/>
+  <arg name="gui"           default="true"/>
+  <arg name="paused"        default="false"/>
+  <arg name="use_sim_time"  default="true"/>
+  <arg name="debug"         default="false"/>
+
+  <!-- Spawn pose -->
+  <arg name="x_pos"   default="0.0"/>
+  <arg name="y_pos"   default="0.0"/>
+  <arg name="z_pos"   default="0.05"/>
+  <arg name="yaw"     default="0.0"/>
+
+  <arg name="world_name" default="worlds/empty.world"/>
+
+
+  <!-- ================================================================
+       ROBOT DESCRIPTION
+       ================================================================ -->
+  <param name="robot_description"
+         command="$(find xacro)/xacro $(find diff_drive_robot)/urdf/three_wheel_diff_drive.xacro"/>
+
+
+  <!-- ================================================================
+       GAZEBO
+       ================================================================ -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name"   value="$(arg world_name)"/>
+    <arg name="paused"       value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="gui"          value="$(arg gui)"/>
+    <arg name="headless"     value="false"/>
+    <arg name="debug"        value="$(arg debug)"/>
+  </include>
+
+
+  <!-- ================================================================
+       SPAWN ROBOT
+       ================================================================ -->
+  <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model"
+        args="-urdf
+              -model three_wheel_diff_drive
+              -param robot_description
+              -x $(arg x_pos)
+              -y $(arg y_pos)
+              -z $(arg z_pos)
+              -Y $(arg yaw)"
+        respawn="false" output="screen"/>
+
+
+  <!-- ================================================================
+       ROBOT STATE PUBLISHER
+       ================================================================ -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher"
+        type="robot_state_publisher" respawn="false" output="screen">
+    <param name="publish_frequency" type="double" value="30.0"/>
+    <param name="tf_prefix"         type="string" value=""/>
+  </node>
+
+
+  <!-- ================================================================
+       JOINT STATE PUBLISHER
+       ================================================================ -->
+  <node name="joint_state_publisher" pkg="joint_state_publisher"
+        type="joint_state_publisher" respawn="false" output="screen">
+    <param name="use_gui" value="false"/>
+    <rosparam param="source_list">["/joint_states"]</rosparam>
+  </node>
+
+
+  <!-- ================================================================
+       OPTIONAL: RVIZ
+       Visualises robot model, TF tree, RGB image, depth cloud
+       ================================================================ -->
+  <group if="$(arg use_rviz)">
+    <node name="rviz" pkg="rviz" type="rviz" output="screen"
+          args="-d $(find diff_drive_robot)/rviz/robot.rviz"/>
+  </group>
+
+</launch>
